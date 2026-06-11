@@ -1,0 +1,51 @@
+# TOP-FedTAMU+ 的新增配置
+# 不替代原 config.yaml，而是在新脚本中读取这些字段
+
+top_fedtamu:
+  # 是否启用拓扑正则
+  use_topology_regularization: true
+
+  # 拓扑正则系数 rho
+  topology_rho: 1.0e-3
+
+  # Hessian 数值稳定项
+  hessian_damping: 1.0e-6
+
+  # 是否启用事件级污染发现
+  use_event_discovery: true
+
+  # 事件窗口长度，例如连续 24 小时
+  event_window: 24
+
+  # 遗忘比例，用于选择 top score 事件
+  event_unlearn_prop: 0.05
+
+  # 拓扑遗忘传播范围参数 tau
+  topology_tau: 1.0
+
+  # 是否启用物理安全 reweight
+  use_physics_safe_reweight: true
+
+  # 时间对齐 eps 的基础上下界
+  eps_min: 0.95
+  eps_max: 1.05
+
+  # L1 约束
+  l1_constraint: 0.05
+
+  # 是否加入 PTDF / DC 潮流安全约束
+  use_flow_safety: true
+
+  # 线路潮流安全裕度比例
+  flow_margin_ratio: 0.05
+
+  # 功率平衡安全裕度
+  balance_margin: 0.01
+
+  # 攻击模拟参数
+  attack:
+    type: scale_fdi
+    bus_ids: [0]
+    start: 100
+    end: 124
+    scale: 1.2

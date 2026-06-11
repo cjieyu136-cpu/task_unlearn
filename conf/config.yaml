@@ -1,0 +1,20 @@
+# 1. 默认子配置（Hydra 特性：自动加载子配置文件）
+defaults:
+  - case: case14 # 加载 conf/case/case14.yaml 子配置（案例相关参数）
+  - model: linear # 加载 conf/model/linear.yaml 子配置（模型相关参数）
+# 2. 数据处理参数（对应 clean_data.py 和训练脚本）
+data:
+  data_prop: 1
+  random_split: false
+  train_prop: 0.8
+  random_seed: 42
+  batch_size: 16
+  batch_size_eval: 512
+  no_load: 14 # 负荷数量（对应14个BUS/节点，即目标处理的BUS数）
+# 3. 机器遗忘参数（对应 unlearning_federated.py）
+unlearn_prop: 0.2
+unlearn_mode: helpful
+influence_dir: influence/
+simulation_dir: simulation_result/
+# 4. 评估指标（对应 eval_unlearn.py）
+criteria: mse
