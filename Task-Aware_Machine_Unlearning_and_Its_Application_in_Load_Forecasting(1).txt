@@ -1,0 +1,1368 @@
+7178 IEEE TRANSACTIONS ON POWER SYSTEMS, VOL. 39, NO. 6, NOVEMBER 2024
+Task-Aware Machine Unlearning and Its Application
+in Load Forecasting
+Wangkun Xu , Student Member , IEEE, and Fei Teng , Senior Member , IEEE
+Abstract—Data privacy and security have become a non-
+negligible factor in load forecasting. Previous researches mainly
+focus on training stage enhancement. However, once the model is
+trained and deployed, it may need to ‘forget’ (i.e., remove the im-
+pact of) part of training data if these data are found to be malicious
+or as requested by the data owner . This paper introduces the con-
+cept of machine unlearning which is speciﬁcally designed to remove
+the inﬂuence of part of the dataset on an already trained forecaster .
+However, direct unlearning inevitably degrades the model gener-
+alization ability. To balance between unlearning completeness and
+model performance, a performance-aware algorithm is proposed
+by evaluating the sensitivity of local model parameter change us-
+ing inﬂuence function and sample re-weighting. Furthermore, we
+observe that the statistical criterion such as mean squared error,
+cannot fully reﬂect the operation cost of the downstream tasks
+in power system. Therefore, a task-aware machine unlearning is
+proposed whose objective is a trilevel optimization with dispatch
+and redispatch problems considered. We theoretically prove the
+existence of the gradient of such an objective, which is key to
+re-weighting the remaining samples. We tested the unlearning algo-
+rithms on linear, CNN, and MLP-Mixer based load forecasters with
+a realistic load dataset. The simulation demonstrates the balance
+between unlearning completeness and operational cost.
+Index Terms —Data privacy and security, load forecasting,
+machine unlearning, end-to-end learning, power system operation,
+inﬂuence function.
+NOMENCLA TURE
+Abbreviations:
+CNN Convolutional Neural Network.
+MAPE Mean Absolute Percentage Error.
+MLP Multi Layer Perceptron.
+MSE Mean Squared Error.
+NN Neural Network.
+PA/TA-MU Performance/Task Aware Machine
+Unlearning.
+SO System Operator.
+Machine Unlearning:
+θ⋆,θ⋆
+mod,θ⋆
+remain Optimal Model Parameters.
+Manuscript received 4 September 2023; revised 21 January 2024; accepted
+8 March 2024. Date of publication 13 March 2024; date of current version
+29 October 2024. Paper no. TPWRS-01388-2023. (Corresponding author: Fei
+Teng.)
+The authors are with the Department of Electrical and Electronic En-
+gineering, Imperial College London, SW7 2BX London, U.K. (e-mail:
+f.teng@imperial.ac.uk).
+All codes can be found at https://github.com/xuwkk/task_aware_machine_
+unlearning.
+Color versions of one or more ﬁgures in this article are available at
+https://doi.org/10.1109/TPWRS.2024.3376828.
+Digital Object Identiﬁer 10.1109/TPWRS.2024.3376828
+f (·;θ) Load forecast model.
+yi, ˆyi Ground-truth and forecast load of
+thei-th sample.
+ℓi(·), ℓi
+test(·) Training and test loss/criterion of the
+i-th sample.
+ϵi Weight on the i-th sample.
+λ1, λ∞ 1-norm and inf-norm limits on the
+sample weights variation.
+D, Dtest, Dunlearn,Dremain Training, test, unlearn, and remain
+dataset.
+L(·), Ltest(·) Training and test cost function.
+N , Ntest Size of training and test dataset.
+Power System Operation:
+Pg ,Pls,Pgs V ector of generator set-points, load
+sheddings, and energy storages.
+Qg ,cg Second and ﬁrst order coefﬁcient of
+the generator cost.
+cgs2,cgs Second and ﬁrst order coefﬁcient of
+energy storage.
+cls2, cls Second and ﬁrst order coefﬁcient of
+load shedding.
+I. I NTRODUCTION
+A. Data Privacy and Security in Load F orecasting
+A
+CCURA TE load forecasting is essential for the secu-
+rity and economic operation of the power system. The
+deterministic [1] and probabilistic [2] methods are two main
+categories. Recently, machine and deep learning algorithms
+have been widely applied to better retrieve spatial and temporal
+information, which certainly beneﬁt the progression of load
+forecasting [3]. To fulﬁll the training purpose, large amount of
+data is collected from individuals, which challenges the integrity
+of data ownership and security.
+In power system, the system operator (SO) collects and trans-
+fers individual data for various operational purposes. However,
+this arrangement has raised privacy concerns, as individual
+load data are sensitive and can be targeted to retrace personal
+identity and behavior [4]. From the perspective of data security,
+data collected from unsecured sources are prone to errors and
+adversaries. For example, the authors of[5] benchmark how poor
+training data could degrade forecast accuracy by introducing
+random noise. Furthermore, data poisoning attack is speciﬁcally
+designed to contaminate the training dataset to prevent the load
+forecaster from being accurate at the test stage [6].
+0885-8950 © 2024 IEEE. Personal use is permitted, but republication/redistribution requires IEEE permission.
+See https://www.ieee.org/publications/rights/index.html for more information.
+Authorized licensed use limited to: Donghua University. Downloaded on August 31,2025 at 13:33:42 UTC from IEEE Xplore.  Restrictions apply. 
+XU AND TENG: TASK-AW ARE MACHINE UNLEARNING AND ITS APPLICA TION IN LOAD FORECASTING 7179
+Most of the existing work designs a preventive training algo-
+rithm to address concerns about data privacy and security. For
+example, federated learning is studied, in which each training
+participant only shares the trained parameters with the cen-
+tral server [7].I n [8], a fully distributed training framework
+has been proposed in which each participant only shares the
+parameters with his neighbors. Differential privacy is another
+privacy-preserving technique used for load forecasting to avoid
+identifying the individual [9]. To combat poisoning attack, fed-
+erated learning enhanced with differential privacy is developed
+in [10]. By weight-clipping and adding noise to the central
+parameter update, the global model can be resistant to inference
+attacks to some extent. In addition, gradient quantization is
+applied, where each participant only uploads the sign of the
+local gradient [11].
+B. Machine Unlearning
+However, training stage prevention is not sufﬁcient when
+the post-action of removing the impact of those data from the
+trained forecaster is needed. From privacy concerns, in addition
+to the right to share the data, many national and regional regu-
+lations have certiﬁed the consumers’ ‘right to forget’ [12], such
+as the European Union’s General Data Protection Regulation
+(GDPR) and the recent US’s California Consumer Privacy Act
+(CCPA). That is, consumers are eligible to request to destroy
+their personal records at any stage of the service, including the
+encoded information in the trained model [13]. Meanwhile, the
+SO may not be aware of the data defect until the model has been
+trained and deployed. Obviously, a straightforward approach to
+removing the impact of part of the dataset is to retrain the model
+from scratch on the remaining data. However, retraining can be
+computationally expensive and sometimes infeasible due to the
+lack of the original dataset.
+In this context, machine unlearning (MU) has been introduced
+in machine learning especially the computer vision community
+to study the problem of removing a subset of training data, the
+forget or unlearn dataset, from the trained model. It has recently
+been extended to other practical ﬁelds, such as removing bias in
+language models [14], unlearning personal information on the
+Internet of Things [15] and digital twin mobile networks [16],a s
+well as removing malicious samples in wireless communication
+beam selection problems [17].
+Originating from [18] for statistical query learning, MU can
+be broadly classiﬁed into exact and approximate unlearning.
+Exact unlearnings are developed for speciﬁc algorithms, such
+as k-means [19] and modiﬁed random forest [20]. The gradient
+and the Hessian matrix of the training objective are useful to
+approximate the inﬂuence of samples on the parameters of the
+trained model. Therefore, the Fisher information [21], [22] and
+the inﬂuence function [23], [24], [25] are adopted to unlearn
+the inﬂuence of the forget dataset from the trained model.
+Motivated by differential privacy, [25] certiﬁes the exactness
+of data removal in linear classiﬁers. However, these methods
+are difﬁcult to generalize to the neural network (NN) [26] with
+guaranteed unlearning performance. To overcome the problem, a
+mixed-privacy forgetting is proposed to only unlearn on a linear
+TABLE I
+PURPOSES OF UNLEARNING
+regression model around the trained NN [24], [25]. Projected
+gradient unlearning is proposed in [27]. The gradient orthogonal
+to the column space of gradients of the remaining dataset is
+adopted to incrementally unlearn the forget dataset without
+catastrophically forgetting the remaining dataset.
+Another line of research assumes that the model is trained with
+an oracle, that is, by taking into account the future unlearning
+requirement during training. For example, amnesiac training
+tracks the contribution of each training batch. When data in a
+batch is requested to be removed, the batch contribution can
+simply be subtracted [28]. Alternatively, an exact but efﬁcient
+retraining algorithm is proposed in [29] in which ensemble
+models are trained on disjoint subsets of data. Therefore, only
+the model trained on the unlearned dataset needs to be re-trained.
+However, when the forget dataset spreads over multiple models,
+this method becomes less efﬁcient. Finally, the theorem and
+application of machine unlearning are continually studied and
+more information can be found in the recent review [30].
+C. Research Gaps
+1) Unlearning Completeness vs Model Performance: Al-
+though retraining is usually not a viable option, it is broadly
+agreed that the golden rule for unlearning is to minimize the
+distance between unlearnt and retrained models[30]. In addition,
+the unlearning algorithm is complete if the unlearnt model
+is identical to the model re-trained on the remaining dataset.
+However, we argue that complete unlearning may not be suitable
+for power system applications. Referring to Table I, when the
+privacy is mainly concerned ( privacy-driven MU ), although
+complete unlearning can certainly remove the inﬂuence of the
+forget dataset, it can inevitably degrade the performance of the
+trained model so that the interest of the remaining customers is
+harmed [13].F o rt h e security-driven MU , the malicious data
+can still contain useful information. However, the complete
+unlearning not only removes the adverse inﬂuence of the forget
+dataset, but also the useful one.
+Therefore, under both privacy and security concerns, machine
+unlearning is to eliminate the inﬂuence of the data from the
+load forecaster while considering the possible inﬂuence on the
+model performance. We model this dilemma as a trade-off be-
+tween unlearning completeness and model performance.H o wt o
+quantitatively calculate the two factors effectively and efﬁciently
+without knowing the re-trained model needs to be investigated.
+2) Physical Meaning of Power System: Apart from the com-
+pleteness and performance trade-off, directly applying the MU
+Authorized licensed use limited to: Donghua University. Downloaded on August 31,2025 at 13:33:42 UTC from IEEE Xplore.  Restrictions apply. 
+7180 IEEE TRANSACTIONS ON POWER SYSTEMS, VOL. 39, NO. 6, NOVEMBER 2024
+Fig. 1. Workﬂow of machine unlearning. The data removal request can be
+made by privacy and security concerns. An unlearning algorithm is developed to
+update the forecaster with the role of power system operation being considered.
+algorithms from machine learning community overlooks the
+physical meaning of power system. In load forecasting, the
+ultimate goal is to use the forecast load for downstream tasks,
+such as dispatching the generator. As shown in [31], [32],
+[33], the forecast error mismatches the generator cost deviation
+such that a highly accurate load forecaster may not result in
+economic power system operation. Intuitively, we argue that the
+performance of MU also deviates from the accuracy criterion to
+the task-aware generator cost. Therefore, the cost of generator
+needs to be evaluated as the performance criterion when dealing
+with the completeness-performance trade-off.
+D. Contributions
+The contributions of this paper are summarized as follows:
+r Machine Unlearning: To our knowledge, this is the ﬁrst
+paper applying machine unlearning to power system appli-
+cations. Speciﬁcally, we introduce machine unlearning to
+the load forecasting model (shown by Fig.1). The inﬂuence
+of forget dataset on the trained model is evaluated by
+inﬂuence function-based approach, which is eliminated by
+Newton’s update.
+r Completeness-Performance Trade-off:We show that com-
+plete unlearning can inevitably inﬂuence statistical perfor-
+mance of the load forecaster, such as MSE and MAPE. To
+overcome the dilemma, the inﬂuence function is used to
+quantify the impact on the statistical performance of each
+sample, which allows reweighting the remaining dataset
+through optimization and improving performance through
+performance-aware machine unlearning (PAMU).
+r Task-aware Machine Unlearning:Finally, we demonstrate
+that statistical performance cannot reﬂect the ultimate goal
+of power system operation, such as minimizing the cost
+of generator dispatch. Therefore, a task-aware machine
+unlearning (TAMU) is proposed by formulating the un-
+learning objective as a trilevel optimization. We theoreti-
+cally prove the existence of the gradient of such task-aware
+objective, which is key to sample re-weighting.
+II. M ACHINE UNLEARNING FOR LOAD FORECASTING
+A. Parametric Load F orecasting Model
+In this paper, we consider the load forecasting problem withn
+loads/participants. Given dataset D = {(xi,yi)}N
+i=1.L e txi ∈
+Rn×M be the feature matrix, i.e., each load has feature of length
+M , andyi ∈Rn be the ground truth load. A parametric forecast
+modelf (·;θ): Rn×M × RP → Rn can be trained as
+θ⋆ =a r g m i n
+θ
+L(θ)=a r g m i n
+θ
+1
+N
+N∑
+i=1
+ℓ(f (xi;θ),yi) (1)
+where L(θ) is the training loss. For simplicity, denote
+ℓ(f (xi;θ),yi) as ℓi(θ) as the loss on the i-th sample. MSE is
+commonly used as the training loss by assuming that the forecast
+error follows Gaussian distribution, i.e., ℓi(θ)= ∥f (xi;θ)−
+yi∥2
+2.
+In addition to the training dataset D, there is a test dataset
+Dtest on which a test criterion can be evaluated on:
+Ltest(θ⋆)= 1
+Ntest
+Ntest∑
+i=1
+ℓi
+test(θ⋆) (2)
+The test criterion ℓi
+test(θ) can be different from the training loss
+ℓi(θ). For instance, the load forecasting model can be trained
+with MSE loss but is usually evaluated by MAPE, etc. In this
+paper, we call the loss/criterion such as MSE and MAPE as
+statistical(-driven) loss/criterion.
+B. Inﬂuence Function
+The inﬂuence function deﬁnes a second-order method to eval-
+uate parameter changes when training samples are up-weighted
+by a small amount[34]. Deﬁne a sub-datasetDup ⊆D. For every
+sample j ∈Dup up-weighted by ϵj , the new objective function
+can be written as
+θ⋆
+mod =a r g m i n
+θ
+Lmod(θ)
+=a r g m i n
+θ
+1
+N
+∑
+i∈D
+ℓi(θ)
+  
+L(θ)
++ 1
+N
+∑
+j∈Dup
+ϵjℓj (θ)
+  
+Lup (θ)
+(3)
+The ﬁrst-order optimality condition gives that
+∇Lmod(θ⋆
+mod)= 0 (4)
+Apply the ﬁrst-order Taylor expansion around θ⋆ on (4):
+∇Lmod(θ⋆)+ ∇2Lmod(θ⋆)(θ⋆
+mod −θ⋆) ∼= 0
+Consequently, up-weighting samples in Dup can approximately
+result in parameter changes
+θ⋆
+mod −θ⋆ ∼= −
+(
+∇2Lmod(θ⋆)
+)−1
+∇Lmod(θ⋆) (5)
+Furthermore, since ∇L(θ⋆)= 0, ∇Lmod(θ⋆)= ∇Lup(θ⋆).
+Equation (5) can be rewritten as
+θ⋆
+mod −θ⋆ ∼= −
+(
+∇2Lmod(θ⋆)
+)−1
+∇Lup(θ⋆) (6)
+Whenϵj is small and/or|Dup|≪| D |,∇2Lmod(θ⋆) ∼= ∇2L(θ⋆).
+Therefore, (6) is further approximated as
+θ⋆
+mod −θ⋆ ∼= −
+(
+∇2L(θ⋆)
+)−1
+∇Lup(θ⋆) (7)
+where ∇Lup(θ⋆)= 1
+N
+∑
+j∈Dup ϵj∇ℓj (θ⋆) and ∇2L(θ⋆)=
+1
+N
+∑
+j∈D∇2ℓj (θ⋆).
+Authorized licensed use limited to: Donghua University. Downloaded on August 31,2025 at 13:33:42 UTC from IEEE Xplore.  Restrictions apply. 
+XU AND TENG: TASK-AW ARE MACHINE UNLEARNING AND ITS APPLICA TION IN LOAD FORECASTING 7181
+We highlight that (5)–(7) are Newton’s update on the param-
+eter with respect to the new objective (3). Therefore, for the
+multivariate linear load forecaster with MSE loss, (5) and (6)
+are exact updates on the trained model θ⋆.
+C. Machine Unlearning Algorithm
+From a data privacy perspective, participants are eligible to
+ask the SO to remove their data and inﬂuence on the trained
+modelθ⋆. When a request is made on recordj, the corresponding
+datum (xj,yj ) needs to be removed from the training dataset.
+Meanwhile, D can contain erroneous or malicious data, caused
+by improper data collection or poisoning attacks, whose inﬂu-
+ence on the trained forecaster needs to be removed as well.
+Deﬁne Dunlearn ⊂D as the dataset that needs to be re-
+moved and|Dunlearn|≪| D |. The remaining dataset is denoted as
+Dremain = D\D unlearn. A commonly used MU algorithm can be
+directly derived from the inﬂuence function by setting ϵj = −1
+in (3). As a result, (5) can be modiﬁed as
+θ⋆
+remain ∼= θ⋆ −
+( ∑
+i∈Dremain
+∇2ℓi(θ⋆)
+)−1 ∑
+i∈Dremain
+∇ℓi(θ⋆) (8)
+For a linear forecaster, unlearning (8) is complete as it is
+guaranteed to converge atθ⋆
+remain, the model retrained byDremain.
+Similar unlearning algorithms can also be derived from (6) and
+(7).
+III. P ERFORMANCE-AWA R EMACHINE UNLEARNING
+A complete MU algorithm on linear load forecaster such as
+(8) can inevitably inﬂuence the performance of the test dataset
+(will be shown in the simulation). Following the previous work
+in [35], a performance-aware machine unlearning (PAMU) is
+derived by re-weighting the remaining samples based on their
+distinct contribution to the statistic criterion (2).
+To start, the inﬂuence function (7) can be further extended
+to assess the performance change of the test set due to the up-
+weighted objective (3) [26], [36]. The performance on the test
+dataset for model parameterized by θ⋆
+remain can be written as
+Ltest(θ⋆
+remain)= 1
+Ntest
+Ntest∑
+i=1
+ℓi
+test(θ⋆
+remain) (9)
+Applying ﬁrst-order Taylor expansion on (9) gives:
+Ltest(θ⋆
+remain)
+∼= 1
+Ntest
+Ntest∑
+i=1
+ℓi
+test(θ⋆)
+  
+Ltest (θ⋆ )
++ 1
+Ntest
+Ntest∑
+i=1
+∇ℓi
+test(θ⋆)T (θ⋆
+remain −θ⋆)
+(10)
+To eliminate the performance change(10), the remaining dataset
+can be re-weighted. The idea is straightforwardly that, after
+unlearning, different remaining samples will have different in-
+ﬂuence on the performance, which needs to be re-weighted as if
+they are being re-trained.
+The new objective function on the re-weighted remaining
+dataset can be written as
+θ⋆
+remain,ϵ =a r g m i n
+θ
+1
+N
+∑
+i∈Dremain
+ϵiℓi(θ) (11)
+where ϵi is an unknown weight for sample i in the remaining
+dataset. Referring to (5), the parameter changes can be approx-
+imated as
+θ⋆
+remain,ϵ −θ⋆ ∼= −
+( ∑
+i∈Dremain
+ϵi∇2ℓi(θ⋆)
+)−1 ∑
+i∈Dremain
+ϵi∇ℓi(θ⋆)
+(12)
+Plugging (12) into (10), the performance changes can be written
+as:
+Ltest(θ⋆
+remain,ϵ)−Ltest(θ⋆) ∼= mT ∑
+i∈Dremain
+ϵi∇ℓi(θ⋆) (13)
+where
+mT = − 1
+Ntest
+∑
+i∈Dtest
+∇ℓi
+test(θ⋆)T
+( ∑
+i∈Dremain
+ϵi∇2ℓi(θ⋆)
+)−1
+(14)
+Whenϵi is close to 1, the m vector can be approximated as
+˜mT = − 1
+Ntest
+∑
+i∈Dtest
+∇ℓi
+test(θ⋆)T
+( ∑
+i∈Dremain
+∇2ℓi(θ⋆)
+)−1
+(15)
+Our goal is to ﬁnd an optimal weights to improve the test
+set performance, which can be formulated as a constrained
+optimization problem:
+ϵ⋆ =a r g m i n
+ϵ
+˜mT ∑
+i∈Dremain
+ϵi∇ℓi(θ⋆)
+s.t. 1
+Nremain
+∥ϵ−1∥1 ≤λ1, ∥ϵ−1∥∞ ≤λ∞
+(16)
+where ϵ ∈R|Dremain| and1 ∈R|Dremain|.
+In (16), the weights of the remaining samples are optimized
+so that the inﬂuence of forgetting Dunlearn is reduced. Since the
+ﬁrst-order Taylor expansion (10) is a local approximation, the
+1-norm and inf-norm constraints are added to control aggregated
+and individual re-weighting. When λ1 → 0 or λ∞ → 0,ϵ → 1,
+representing complete machine unlearning (8). When λ1 and
+λ∞ become larger, the performance of the test dataset improves,
+while the completeness of the unlearning is reduced. Therefore,
+by controlling λ1 and λ∞, the trade-off between MU complete-
+ness and performance changes can be balanced.
+Since both ˜m and ∇ℓi(θ)⋆,i ∈Dremain are calculated in
+advance, (16) is a convex optimization problem that can be
+easily solved. Once the optimal weightsϵ⋆ are optimized, we can
+unlearnDunlearn through (12). Regarding different choices ofℓtest,
+e.g. MSE and MAPE, the remaining dataset can be reweighted
+in distinct manners. In addition, it is also possible to integrate
+different criteria.
+Furthermore, compared to [35], the objective of (16) does not
+take the absolute value. Therefore, the objective of (16) can be
+negative and it is allowed to improve performance beyond the
+Authorized licensed use limited to: Donghua University. Downloaded on August 31,2025 at 13:33:42 UTC from IEEE Xplore.  Restrictions apply. 
+7182 IEEE TRANSACTIONS ON POWER SYSTEMS, VOL. 39, NO. 6, NOVEMBER 2024
+originally trained model. Any uncovered biased data in Dremain
+will be assigned a smaller weight, and unlearning becomes a
+one-step continual learning on the re-weighted samples. Re-
+weighting the samples to improve the model performance has
+been used in other load forecasting algorithm [37]. However,
+we directly ﬁnd the suitable weights on the trained parameter
+θ⋆ through an optimization problem (16) and update the model
+using the second-order approach (12).
+IV . TASK-AWA R EMACHINE UNLEARNING
+A. F ormulation and Algorithm
+In power systems, the forecast load is further used to schedule
+generators, and the statistic accuracy of the forecast load is
+eventually converted into the deviation of the generator cost,
+which is strongly linked to the value of each sample as well as
+the proﬁt of the SO and participants. As a result, PAMU guided
+by the statistic-driven criterion may not reﬂect on the ultimate
+goal of power system operation, and a further step on PAMU
+is needed to balance the generator cost, which can be done by
+taking the generator cost as the new test criterion.
+To measure the impact of model parameterθon the operation
+cost, the following task-aware criterion Lgen(θ) can be formu-
+lated:
+min
+θ
+1
+Ntest
+Ntest∑
+i=1
+ℓi
+gen(θ)
+s.t.
+⎧
+⎪⎪⎪⎪⎪⎪⎪⎪⎪⎪⎪⎪⎨
+⎪⎪⎪⎪⎪⎪⎪⎪⎪⎪⎪⎪⎩
+(Re-dispatch):
+(Pi⋆
+ls,Pi⋆
+gs ) ∈arg min{cls2∥Pi
+ls∥2
+2 +cgs2∥Pi
+gs∥2
+2
++cls∥Pi
+ls∥1 +cgs∥Pi
+gs∥1 :
+(Pi
+ls,Pi
+gs ) ∈Credispatch(Pi⋆
+g ,yi)}
+(Dispatch):
+Pi⋆
+g ∈arg min{PiT
+g QgPi
+g +cT
+g Pi
+g +cls∥si∥1 :
+(Pi
+g,si) ∈Cdispatch(ˆyi)}
+(Forecast):
+ˆyi = f (xi;θ)
+for all i =1 ,..., |Dtest| (17)
+Detailed formulations can be found in Appendix A.T h et a s k -
+aware criterion (17) can be viewed as a trilevel optimization
+problem with two lower levels, taking the expectation over the
+test dataset. For each sample, the lower level one is a dispatch
+problem that minimizes the generator cost subject to the system
+operation constraintCdispatch.Pg is the generator dispatch. Lower
+level two is a re-dispatch problem which aims to balance any
+under- or over-generation due to inaccurate forecast through load
+shedding Pls and generation storage Pgs , under the constraint
+set Credispatch. The upper level, which represents the expected
+operation cost, can be determined as the integration of the two
+stages:
+ℓgen(Pg,Pls,Pgs ;θ)
+= PT
+g QgPg +cls2∥Pls∥2
+2 +cgs2∥Pgs∥2
+2
++cT
+g Pg +cls1∥Pls∥1 +cgs1∥Pgs∥1
+(18)
+Fig. 2. Structure of tri-level optimization (17) viewed as layers in the forward
+pass. The gradients used in (20) are highlighted in red.
+When θis ﬁxed and if each lower-level problem has a unique
+optimum, (17) is the expected real-time power system operation
+cost on the test dataset.
+Referring to (10), to evaluate the inﬂuence on the generator
+cost, the gradient∇ℓi
+gen(θ⋆) needs to be calculated, which seems
+to be a problem due to the nested structure and constraints in
+(17). To solve the problem, ﬁrstly, for each sample i,i tc a n
+be observed that the lower level problems are sequentially con-
+nected, that is, the input to stage one problem is the forecast load
+while the input to stage two problem is the generator dispatch
+status from stage one. Second, the lower-level problems are also
+independent among samples and the constraints. Therefore, the
+lower-level optimizations can be viewed as composite function
+for each sample. Let Pi
+g = p⋆
+1(ˆyi) and Pi
+ls,gs = p⋆
+2(Pi
+g,yi)
+be the optimal solution map for dispatch and re-dispatch, the
+individual generator cost (18) can be written as a composite
+function:
+ℓi
+gen(θ⋆)= ℓi
+gen(p⋆
+1(ˆyi),p⋆
+2(p⋆
+1(ˆyi),yi)) (19)
+Alternatively, we can view the lower-level optimizations as se-
+quential layers upon the parametric forecasting model. The layer,
+which represents a constrained optimization problem, is named
+as differentiable convex layer[38]. Consequently, TAMU can be
+achieved by replacing the statistic metric ℓi
+test(θ⋆) by ℓi
+gen(θ⋆),
+followed by ﬁnding the weights of the remaining dataset (16)
+and updating the parameters by (12).
+The last issue that needs to be resolved is to calculate the
+gradient of (19) as required by (10). From the chain rule, the
+gradient of (19) can be written as:
+∂ℓi
+gen(θ⋆)
+∂θ
+=
+(
+∂ℓi
+gen(Pi
+g,Pi
+ls,gs )
+∂Pg
++
+∂ℓi
+gen(Pi
+g,Pi
+ls,gs )
+∂Pls,gs
+∂p⋆
+2(Pi
+g )
+∂Pg
+)
+× ∂p⋆
+1(ˆyi)
+∂ˆy
+∂f (θ⋆)
+∂θ (20)
+with the gradient ﬂow highlighted in Fig. 2.I n (20), the gradient
+∂ℓi
+gen(θ⋆)/∂θexists if the gradients through the differentiable
+convex layers, namely ∂p⋆
+1(ˆyi)/∂ˆy and ∂p⋆
+2(Pi
+g )/∂Pg ,e x i s t ,
+which is fulﬁlled under some assumptions in the following
+proposition.
+Proposition 1: The gradients ∂p⋆
+1(ˆyi)/∂ˆy and ∂p⋆
+2(Pi
+g )/
+∂Pg exist, which do not depend on ˆyi and Pi
+g , respectively, if
+1).Q is positive deﬁnite,cls2 andcgs2 are positive; and 2). The
+Authorized licensed use limited to: Donghua University. Downloaded on August 31,2025 at 13:33:42 UTC from IEEE Xplore.  Restrictions apply. 
+XU AND TENG: TASK-AW ARE MACHINE UNLEARNING AND ITS APPLICA TION IN LOAD FORECASTING 7183
+Fig. 3. Structure of NN based load forecaster and feature extractor. All the
+layers except for the Flatten Layer and the Linear Layer 2 contain activations.
+linear independent constraint qualiﬁcation (LICQ) is satisﬁed at
+the optimum of each of the lower-level problems.
+The proof can be found in Appendix B.
+B. Extension to Neural Network Based Load F orecaster
+The unlearning algorithm (8) is complete on the linear load
+forecaster as the training objective is quadratic. However, this
+condition is usually not satisﬁed for neural networks. In the
+meantime, its Hessian can be singular due to early stop of train-
+ing. This makes the inﬂuence function approximate poorly to the
+parameter and performance changes [26], and it becomes harder
+to evaluate the trade-off between unlearning completeness and
+model performance in PAMU and TAMU.
+To address this problem, we assume that there exists a load
+forecasting model which is not trained by the consumers’ data
+in the service provided by SO. The model can be a pre-trained
+model which is publicly available or can be trained on historic
+non-sensitive data by the SO. Using the idea of transfer learn-
+ing [39], the SO can then use the pre-trained load forecaster as a
+deep feature extractor and use the consumers’ data to ﬁne tune
+the last layer. Therefore, only the last layer needs to be unlearnt.
+Practically, we ﬁrst divide the training dataset into pre-trained
+and user-sensitive data as Dpre and Dsen, respectively, with
+Dpre ∩Dsen = ∅. The pre-trained data is assumed to be collected
+neutrally, which does not violate any participant’s privacy and
+is error-free, while the user-sensitive data may not be. We then
+pre-train a load forecaster on the Dpre using regular stochastic
+gradient descent (SGD), and the trained model (except for the
+last layer) can be used as a deep feature extractor f (·;θ⋆
+FE).A s
+illustrated in Fig. 3,Dsen is further used to ﬁne-tune Linear Layer
+2 by the MSE loss. Since using a stochastic gradient method can
+introduce uncertainties, we propose to ﬁne-tune the last layer
+analytically on Dsen according to the following proposition.
+Proposition 2: The optimization problem of minimizing the
+MSE loss on a linear layer without activations is quadratic and
+has unique minimizer if the extracted features from f (·;θ⋆
+FE)
+are linearly independent.
+The proof can be found in Appendix C.
+According to Proposition 2, ReLU activation cannot be used
+in Linear Layer 1 as it can result in trivial output when the
+extracted features are negative for some of the samples in the
+remaining dataset. When an unlearning is requested, the same
+unlearning algorithms developed previously can be applied on
+Linear Layer 2 alone and MU (8) is complete. Since the feature
+extractor trains only on the pre-train data, it does not contain
+sensitive information that needs to be unlearnt.
+C. Computations
+In this section, we discuss some computational issues and
+some useful open-source packages for the developed unlearning
+algorithms.
+1) Inversion of Hessian: Machine unlearning (8) and calcu-
+lation of vector ˜m in PAMU and TAMU require matrix inversion
+of the Hessian matrix. In general, second-order differentiation
+on training loss is time consuming, as storing and inverting the
+Hessian matrix requires O(d3) operations, where d represents
+the number of parameters in the load forecast model. Using ˜m
+(15) as a example:
+˜mT = − 1
+Ntest
+Ntest∑
+i=1
+∇ℓi
+test(θ⋆)T
+  
+vT ∈R1×d
+( ∑
+i∈Dremain
+∇2ℓi(θ⋆)
+)−1
+  
+H−1∈Rd×d
+(21)
+Calculating ˜m can be reduced to solve a linear system:
+H · ˜m = v (22)
+The conjugate gradient (CG) descent algorithm can be applied
+to solve (22) up tod iterations. We also apply the Hessian vector
+product (HVP) [40] to directly calculate H ˜mk for the k-th
+iteration in CG so that the Hessian matrix will never be ex-
+plicitly calculated and stored. HVP is computationally efﬁcient
+as it only requires one modiﬁed forward and backward pass.
+Similarly, to implement PAMU or TAMU, we can modify the
+objective directly into the sum of training loss weighted by ϵ⋆
+from (16) and implement the same CG and HVP procedure.
+We implement these functionalities using a modiﬁed version of
+Torch-Influence package [26].
+2) Differentiable Convex Layer: In TAMU, the gradient of
+generator cost (20) can be analytically written according to
+Proposition 3 in Appendix B. It also requires the forward pass to
+solve the dispatch and re-dispatch problems. In the simulation,
+we model the operation problems and (16) by Cvxpy [41].
+When calculating the gradient, we use PyTorch automatic
+differentiation package and CvxpyLayers [38] to implement
+fast batched forward and backward passes.
+V. E XPERIMENTS AND RESULTS
+A. Simulation Settings
+We use an open-source dataset from the Texas Backbone
+Power System [42] which includes meteorological and calendar
+features and loads in 2019 with a resolution of one hour. The
+dispatch and re-dispatch problems are solved on a modiﬁed IEEE
+bus-14 system to demonstrate the proposed algorithms. Three
+parametric load forecasting models, namely multivariate linear
+regression, convolutional neural network (CNN), and MLP-
+Mixer [43], are trained by MSE loss. Detailed experimental
+settings can be found in Appendix D.
+B. Unlearning Performance on the Linear Model
+1) Unlearning Performance: Unlearning performances on
+the linear load forecasting model under various unlearning
+Authorized licensed use limited to: Donghua University. Downloaded on August 31,2025 at 13:33:42 UTC from IEEE Xplore.  Restrictions apply. 
+7184 IEEE TRANSACTIONS ON POWER SYSTEMS, VOL. 39, NO. 6, NOVEMBER 2024
+Fig. 4. Performance of complete machine unlearning algorithm (8) on remain (blue), unlearn (red) and test dataset (green) of the linear load forecaster. The
+dotted curves report the performance of the original model and the solid curves are the performance of the unlearnt model.
+Fig. 5. Relationship on the inﬂuences of MSE, MAPE, and Cost criteria on the test dataset from the samples in remain dataset. The r values are Pearson correlation
+coefﬁcients.
+criteria are summarized in Fig. 4. We have veriﬁed that the un-
+learning algorithm (8) results in the same updated parameter as
+the one re-trained on the remaining dataset under all unlearning
+rates.
+Note that the dotted curves, which represent the performance
+of the original model, only slightly change over the various
+unlearning ratios. Broadly speaking, the performance gaps be-
+tween the unlearnt and original models becomes larger as the
+unlearning ratio increases. Especially, all the performance cri-
+teria on the test dataset become worse when the unlearning pro-
+portion increases, which veriﬁes the statement that unlearning
+can inevitably degrade the generalization ability of the trained
+model. For instance, the generator cost can increase by 20%
+when 20% of the training data are unlearnt. In contrast, the
+performance of the remain dataset improves as the unlearning
+ratio increases. This is because when the original model is
+unlearnt, the model parameters are updated and ﬁtted more on
+the remaining dataset. Moreover, it can be observed that the
+trends of performance changes of the unlearnt model are distinct
+for different criterion. In detail, the generator cost (Fig. 4(c))
+diverges more signiﬁcantly from the original model, compared
+to MSE and MAPE.
+2) Performance Sensitivity Analysis: For each sample in the
+remaining dataset, we can calculate its inﬂuence on the expected
+performance of the test dataset. The remaining dataset is chosen
+as it is re-weighted by PAMU and TAMU. For i ∈Dremain,t h e
+inﬂuence can be found by (13) and (15) with ϵi =1 , i.e.,
+Ii
+test
+= − 1
+Ntest
+∑
+j∈Dtest
+∇ℓj
+test(θ⋆)T
+⎛
+⎝ ∑
+j∈Dremain
+∇2ℓj (θ⋆)
+⎞
+⎠
+−1
+∇ℓi(θ⋆)
+(23)
+where the test loss ℓtest(·) can be MSE, MAPE or Cost (19).
+To visualize the relationship among these criteria, we randomly
+draw 1 k samples with equal size of under- and over-generation
+cases from the remaining dataset. For each sample, the under-
+generation means that the sum of the forecast loads is lower
+than the sum of the ground-truth load, and the over-generation
+is opposite. The relationships of any two of the criteria are
+illustrated in Fig. 5 with associated Pearson correlation coefﬁ-
+cients (the r value) calculated. Since the performance changes
+are modeled linearly by ﬁrst-order Taylor expansion (10) and
+the objective of re-weighting optimization is also linear (16),
+Pearson correlation coefﬁcient is a suitable indicator of the linear
+relationship. Using MSE and MAPE as an example, the Pearson
+correlation coefﬁcient is deﬁned as
+rMSE,MAPE =
+∑
+i(Ii
+MSE −¯IMSE)(Ii
+MAPE −¯IMAPE)√∑
+i(Ii
+MSE −¯IMSE)2
+√∑
+i(Ii
+MAPE −¯IMAPE)2
+(24)
+where ¯IMSE and ¯IMAPE are the average of MSE and MAPE
+inﬂuence, respectively.
+Authorized licensed use limited to: Donghua University. Downloaded on August 31,2025 at 13:33:42 UTC from IEEE Xplore.  Restrictions apply. 
+XU AND TENG: TASK-AW ARE MACHINE UNLEARNING AND ITS APPLICA TION IN LOAD FORECASTING 7185
+Fig. 6. Performance of PAMU and TAMU with different test criteria. a), b), and c) are performances on the test dataset evaluated by MSE, MAPE, and averag e
+generator cost, respectively. The performance of the original model and the model unlearnt by complete unlearning (8) are represented by the black and orange
+lines, respectively.
+In Fig. 5, positive sensitivity represents the degradation of per-
+formance after unlearning such sample. That is, after this sample
+is unlearnt, the MSE, MAPE, or average generator cost on
+test dataset increases. First, the Pearson correlation coefﬁcients
+have clearly demonstrated that there exists a strong positive
+linear relationship between the two statistic criteria (0.829),
+while this relationship is insigniﬁcant between the statistic and
+task-aware criteria (0.073 between MSE and Cost and −0.480
+between MAPE and Cost). These distinct relationships imply
+that balancing performance by one statistical criterion is likely
+effective on the other. In contrast, balancing the performance
+by statistical criteria can unlikely be effective on the generator
+cost and vice versa. Secondly, as the under-generation is more
+costly than the over-generation, unlearning an under-generation
+sample tends to reduce the overall generator cost with negative
+sensitivities. As shown by Fig. 5(b) and 5(c), if the sensitivities
+are projected to the y-axis, most of the negative sensitivities
+are contributed by the under-generation samples, which veriﬁes
+our intuition. However, it does not occur in MSE and MAPE
+as they are almost centrally symmetric around the origin in
+Fig. 5(a).
+The above discussions can verify the intuition that the statistic
+performance cannot reﬂect and may even conﬂict with the task-
+aware operation cost.
+3) Performances of PAMU and TAMU: The performance of
+PAMU and TAMU on the test dataset is reported in Fig. 6 in
+which 25% training data is removed. To balance the trade-off,
+λ1 is varied and the inf-norm constraint λ∞ in (16) is set as
+1. That is, the weight of a remaining sample can very from
+0 to 2. First, unlearning by balancing one of the criteria can
+effectively maintain the performance of the same criterion (e.g.,
+red curve in Fig. 6(a), blue curve in Fig. 6(b), and green curve
+in Fig. 6(c)). When λ1 approaches 0, the PAMU and TAMU
+become complete with the same performance as the retrained
+model in all criteria, as no samples can be re-weighted. When
+λ1 increases, the performance of the original model is recovered
+and the divergence to the retrained model increases. After λ1 is
+further increased, better performance is achieved, resulting in a
+new type of continual learning through sample re-weighting. As
+a result, the proposed PAMU and TAMU can effectively balance
+the completeness and performance trade-off in MU by changing
+λ1. In addition, Fig. 7 illustrates the parameter difference to the
+retrained model (evaluated by 2-norm) vs the generator cost,
+which clearly demonstrates the trade-off as well.
+Fig. 7. Trade-off between MU completeness and the operation cost.
+Meanwhile, it is observed that the cost curves perform differ-
+ently compared to the MSE and MAPE curves. When balancing
+the cost, both MSE and MAPE get worse. In contrast, balancing
+the MSE can also keep/improve the MAPE performance to some
+extent, and vice versa. This observation is in line with the analy-
+sis on the Pearson correlation coefﬁcient in the previous section.
+C. Unlearning Performance on the NN F orecaster
+Since the ﬁne-tuning objective on Dsen is quadratic (by
+Proposition 2), the direct unlearning is also complete for the NN
+load forecaster. We can expect that the unlearning behaviors are
+similar to the linear counterpart. Therefore, we only highlight
+some of the simulation results and leave details in Appendix E.
+Similarly to the linear counterpart, unlearning part of the train-
+ing dataset can deteriorate the performance of the test set.
+The performance-aware unlearning algorithm can effectively
+balance the unlearning completeness and model performance,
+which is more effective on the criterion it is evaluated on.
+However, instead of having opposite statistical and cost trends
+in Fig. 6, all criteria are improved with decay speed. This is
+because the NN-based load forecaster is more accurate than the
+linear counterpart, resulting in a less signiﬁcant misalignment
+between the load forecast accuracy and the generator cost.
+VI. C ONCLUSION
+This paper introduces machine unlearning algorithm for load
+forecasting model to eliminate the inﬂuence of data that is
+adversarial or contains sensitive information of individuals. The
+inﬂuence function provides a theoretical foundation that is fur-
+ther used to evaluate the impact of unlearning on the performance
+of the test dataset. A performance aware machine unlearning
+Authorized licensed use limited to: Donghua University. Downloaded on August 31,2025 at 13:33:42 UTC from IEEE Xplore.  Restrictions apply. 
+7186 IEEE TRANSACTIONS ON POWER SYSTEMS, VOL. 39, NO. 6, NOVEMBER 2024
+is proposed by re-weighting the remaining dataset. To handle
+the divergence between statistical and task-aware criteria, we
+propose task-aware machine unlearning. The simulation results
+verify that the proposed task-aware algorithm can signiﬁcantly
+reduce the generator cost on the test dataset by compensating
+for the unlearning completeness.
+APPENDIX
+A. Power System Operation Models
+In the US, the following network constrained economic dis-
+patch (NCED) problem is widely adopted [44]. Given the fore-
+cast load ˆy on each bus,
+(P⋆
+g,ϑ⋆,s⋆)= a r g m i n
+Pg,ϑ,s
+PT
+g QgPg +cT
+g Pg +cls∥s∥1
+s.t. Pg ≤Pg ≤ ¯Pg
+B busϑ= CgPg −Cl(ˆy −s)
+Pf ≤Bfϑ≤ ¯Pf
+s ≥0, ϑref =0
+In the dispatch problem, a quadratic generator cost is adopted.
+In addition, Bbus and Bf are the bus susceptance and branch
+succeptance matrices, respectively.Cg andCl are the generator
+and load incidence matrices, respectively. A slack variables ≥0
+with large cost cls is introduced to ensure feasibility.
+After the generators are scheduled, any over- and/or under-
+generations are penalized when the actual load y is realized
+in real time. In detail, given P⋆
+g , we consider the following
+optimization problem modiﬁed from [45]:
+(P⋆
+ls,P⋆
+gs,ϑ⋆)= a r g m i n
+Pls,Pgs,ϑ
+cls2∥Pls∥2
+2 +cgs2∥Pgs∥2
+2
++cls1∥Pls∥1 +cgs1∥Pgs∥1
+s.t. B busϑ= Cg (P⋆
+g −Pgs )−Cl(y −Pls)
+Pf ≤Bfϑ≤ ¯Pf
+Pls ≥0, Pgs ≥0, ϑref =0
+wherePls andPgs are the load shedding and generation storage.
+The second-order costcgs2 <c ls2 and linear costcgs1 <c ls1 are
+set to penalize more on the load shedding.
+B. Proof to Proposition 1
+We prove Proposition 1 by proving a more general Proposi-
+tion 3. To start, consider the following QP:
+x⋆ =a r g m i n
+x
+1
+2xTQx +qTx
+s.t. Ax +b +g(z) ≤0
+Cx +d +h(z)= 0 (A.1)
+wherex ∈Rn,Q ∈Rn×n,q ∈Rn,A ∈Rm×n,b ∈Rm,C ∈
+Rp×n, d ∈Rp, and z ∈Rq . g : Rq → Rm and h : Rq → Rp
+are functions on z, representing the perturbation parameters.
+Apart from the linear parametric inequality constraints in (17),
+we also include the linear parametric termg(z) in the inequality
+constraint for generalization purposes (and it also gives the same
+conclusion to Proposition 1). We call (A.1) afﬁne-parametric,
+since the parametric terms g(z) and h(z) are afﬁne in the
+inequality and equality constraints.
+Proposition 3: Given an afﬁne parametric QP (A.1), the opti-
+mal primal and dual pair (x⋆, λ⋆,ν⋆) is an afﬁne function of the
+parameter (g(z),h(z)) if 1). Q is positive deﬁnite; and 2). the
+linear independent constraint qualiﬁcation (LICQ) is satisﬁed at
+(x⋆, λ⋆,ν⋆).
+Proof: First, the LICQ states that the gradient of the active
+constraints (including all equality constraints and active inequal-
+ity constraints) are linearly independent [46]. Therefore, C is
+full row rank. Second, the equality Karush–Kuhn–Tucker (KKT)
+conditions [46] can be denoted as:
+G(x⋆, λ⋆,ν⋆,z)=
+⎛
+⎝
+Qx⋆ +q +AT λ⋆ +CTν⋆
+diag(λ⋆)(Ax⋆ +b +g(z))
+Cx⋆ +d +h(z)
+⎞
+⎠ = 0
+We divide the proofs by the existence of active constraints.
+When there are no active inequality constraints, λ⋆ =
+0 due to complementary slackness. Since Q is positive
+deﬁnite, the stationary condition gives x⋆ = −Q−1(q +
+CTν⋆). From the equality constraint, it can be derived
+that ν⋆ =( CQ−1CT )−1(−CQ−1q +d +h(z)). Note that
+CQ−1CT is positive deﬁnite (thus invertible). Let ˆC =
+Q−1CT (CQ−1CT )−1, the analytical form for x⋆ can be writ-
+ten as
+x⋆ =( −Q−1 + ˆCCQ−1)q − ˆC(d +h(z)) (A.2)
+which is afﬁne in h(z).
+When there exist some active inequality constraints, let ˜λ,
+˜A, ˜b, and ˜g(z) be the sub-matrices whose rows are indexed by
+the active constraints. Therefore,AT λ⋆ = ˜A
+T ˜λ
+⋆
+and the active
+inequality constraint becomes:
+˜Ax⋆ + ˜b + ˜g(z)=0 (A.3)
+SinceQ is positive deﬁnite, the stationary condition gives that
+x⋆ = −Q−1(q + ˜A
+T ˜λ
+⋆
++CTν⋆) (A.4)
+Plugging (A.4) into (A.3) and the equality condition gives the
+following matrix form:
+Q
+( ˜λ
+⋆
+ν⋆
+)
+=
+(
+−˜AQ−1q + ˜b + ˜g(z)
+−CQ−1q +d +h(z)
+)
+  
+r(z)
+(A.5)
+where
+Q =
+(
+˜AQ−1 ˜A
+T ˜AQ−1CT
+CQ−1 ˜A
+T
+CQ−1 ˜C
+T
+)
+=
+( ˜A
+C
+)
+Q−1
+(
+˜A
+T
+CT
+)
+Authorized licensed use limited to: Donghua University. Downloaded on August 31,2025 at 13:33:42 UTC from IEEE Xplore.  Restrictions apply. 
+XU AND TENG: TASK-AW ARE MACHINE UNLEARNING AND ITS APPLICA TION IN LOAD FORECASTING 7187
+Due to LICQ, ( ˜A
+T
+,CT ) is full column rank. Therefore, Q is
+positive deﬁnite and from (A.5)
+( ˜λ
+⋆
+ν⋆
+)
+= Q−1r(z) (A.6)
+which is afﬁne in (˜g(z)T,h(z)T )T . Consequently, plugging
+(A.6) into (A.4) gives
+x⋆ = −Q−1
+(
+q +( ˜A
+T
+,CT )Q−1r(z)
+)
+(A.7)
+which is afﬁne in (˜g(z)T,h(z)T )T . ■
+Since the optimal solution of every QP satisfying Proposi-
+tion 3 is an afﬁne function of the parameter ( (A.2) and (A.7)),
+the gradients of the convex layers in the dispatch and re-dispatch
+problems exist and can be analytically written regardless of the
+perturbed parameter.
+Note that with the ﬁnal representation, the optimal solution
+x⋆ still needs to be computed in the forward pass as ˜A can only
+be determined when x⋆ is known.
+C. Proof to Proposition 2
+Let f (·;θ⋆
+FE) be the trained feature extractor on the pre-train
+dataset. Let Xsen ∈RNsen×d be the extracted feature of Dsen as
+input to the Linear Layer 2. Nsen is the number of user sensitive
+data and d is the output size of feature extractor. Note that d ≪
+Nsen andXsen is full column rank by the condition. Meanwhile,
+letY sen ∈RNsen×n be the ground truth load over n participants.
+The parameter of Linear Layer 2 is denoted as Θ∈Rd×n.
+Let y·,i ∈RNsen and θ·,i ∈Rd be the i-th column of Y sen
+and Θ, respectively. The ﬁne-tuning objective can be written
+as
+L(θ)= 1
+Nsen ·n
+n∑
+i=1
+∥y·,i −Xsenθi∥2
+2 (A.8)
+Now deﬁne ˆXsen = diag([Xsen,..., Xsen  
+n
+]) ∈RNsenn×dn as
+a block diagonal matrix packed by n Xsens. ˆY sen =
+[yT
+·,1,..., yT
+·,n]T ∈RNsenn and ˆΘ =[ θT
+·,1,..., θT
+·,n]T ∈Rdn be
+the ﬂattened version of Y sen and Θ, respectively. It can be
+veriﬁed that (A.8) is equivalent to
+L(θ)= 1
+Nsen ·n
+(
+ˆΘ
+T ˆX
+T
+sen ˆXsen ˆΘ−2Y T
+sen ˆXsen ˆΘ+ ˆY
+T
+sen ˆY sen
+)
+(A.9)
+Since Xsen is full column rank, ˆX
+T
+sen ˆXsen is positive deﬁnite.
+Therefore, (A.9) and (A.8) are quadratic with unique global
+minimizer.
+D. Detailed Experiment Settings
+1) Data Description: The meteorological features in the
+Texas Backbone Power System [42] include temperature (k),
+long-wave radiation (w / m2), short-wave radiation (w / m2),
+zonal wind speed (m / s), meridional wind speed (m / s) and
+wind speed (m / s), which are normalized according to their
+individual mean and standard deviation. The calendar feature
+includes the cosine and sin of the weekday in a week and the
+TABLE II
+STRUCTURE OF THE CNN LOAD FORECASTING MODEL
+TABLE III
+STRUCTURE OF THE MLP-MIXER LOAD FORECASTING MODEL WITH EXACT
+SETTINGS IN [43]
+hour in a day according to their individual period. Therefore,
+a single datum is (xi,yi) ∈R14×10 × R14. We also normalize
+the target load by its mean and std. Meanwhile, we use the ﬁrst
+80% data as training dataset and the remaining as test dataset.
+Finally, the IEEE bus-14 system is modiﬁed from PyPower.
+2) Linear Load F orecaster: The linear load forecaster can be
+found by
+min
+θ
+1
+N · 14
+N∑
+i=1
+∥xiθ−yi∥2
+2
+where θ∈R10. The quadratic objective can be solved analyti-
+cally or by using conjugate gradient descent.
+3) Convolutional NN Load F orecaster: A CNN is used as
+feature extractor, which is summarized in Table II.
+4) MLP-Mixer Load F orecaster: MLP-Mixer only contains
+two types of multi-layer perceptrons (MLPs), which iteratively
+capture the information on the feature patches and across the
+feature patches. In our load forecast setting, it iteratively captures
+the features within each load and across each load. Regardless
+of its simple structure, it has been reported that MLP-Mixer
+can have a performance comparable to CNN or attention-based
+networks, e.g., transformers [43]. The structure of MLP-Mixer
+is summarized in Table III..
+5) Traing Conﬁguration: We use the same training speciﬁ-
+cations for CNN and MLP-Mixer. We select the ﬁrst 30% in
+the training dataset as the pre-train dataset and the remaining as
+the user-sensitive dataset. The NN forecaster is trained with 100
+epochs, batch size of 16, Adam optimizer with learning rate of
+10−4 and cosine annealing. We also use early stop and record
+the model with the best performance.
+Authorized licensed use limited to: Donghua University. Downloaded on August 31,2025 at 13:33:42 UTC from IEEE Xplore.  Restrictions apply. 
+7188 IEEE TRANSACTIONS ON POWER SYSTEMS, VOL. 39, NO. 6, NOVEMBER 2024
+Fig. 8. Performance on the CNN load forecaster. First row: performance of complete machine unlearning algorithm (8); Second row: Performance of PAMU and
+TAMU with different test criteria.
+Fig. 9. Performance on the MLP-Mixer load forecaster. First row: performance of complete machine unlearning algorithm (8); Second row: Performance of
+PAMU and TAMU with different test criteria.
+E. Extra Experiment Results
+The detailed unlearning performances on the CNN and MLP-
+Mixer based load forecasting models can be found in Figs.8 and
+9, respectively.
+REFERENCES
+[1] J. Xie, T. Hong, and J. Stroud, “Long-term retail energy forecasting with
+consideration of residential customer attrition,” IEEE Trans. Smart Grid ,
+vol. 6, no. 5, pp. 2245–2252, Sep. 2015.
+[2] T. Hong and S. Fan, “Probabilistic electric load forecasting: A tutorial
+review,” Int. J. F orecasting, vol. 32, no. 3, pp. 914–938, 2016.
+[3] T. Hong, P . Pinson, Y . Wang, R. Weron, D. Y ang, and H. Zareipour, “Energy
+forecasting: A review and outlook,” IEEE Open Access J. Power Energy ,
+vol. 7, pp. 376–388, 2020.
+[4] E. Ebeid, R. Heick, and R. H. Jacobsen, “Deducing energy consumer
+behavior from smart meter data,” Future Internet , vol. 9, no. 3, 2017,
+Art. no. 29.
+[5] J. Luo, T. Hong, and S.-C. Fang, “Benchmarking robustness of load
+forecasting models under data integrity attacks,”Int. J. F orecasting, vol. 34,
+no. 1, pp. 89–104, 2018.
+[6] Y . Liang, D. He, and D. Chen, “Poisoning attack on load forecasting,” in
+Proc. IEEE Innov. Smart Grid Technol.-Asia, 2019, pp. 1230–1235.
+Authorized licensed use limited to: Donghua University. Downloaded on August 31,2025 at 13:33:42 UTC from IEEE Xplore.  Restrictions apply. 
+XU AND TENG: TASK-AW ARE MACHINE UNLEARNING AND ITS APPLICA TION IN LOAD FORECASTING 7189
+[7] Y . Wang, N. Gao, and G. Hug, “Personalized federated learning for
+individual consumer load forecasting,”CSEE J. Power Energy Syst.,v o l .9 ,
+no. 1, pp. 326–330, Jan. 2023.
+[8] Y . Dong, Y . Chen, X. Zhao, and X. Huang, “Short-term load forecasting
+with distributed long short-term memory,” in Proc. IEEE Power Energy
+Soc. Innov. Smart Grid Technol. Conf. 2022, pp. 1–5.
+[9] E. U. Soykan, Z. Bilgin, M. A. Ersoy, and E. Tomur, “Differentially private
+deep learning for load forecasting on smart grid,” inProc. IEEE Globecom
+Workshops, 2019, pp. 1–6.
+[10] J. D. Fernández, S. P . Menci, C. M. Lee, A. Rieger, and G. Fridgen,
+“Privacy-preserving federated learning for residential short-term load
+forecasting,” Appl. Energy, vol. 326, 2022, Art. no. 119915.
+[11] M. A. Husnoo, A. Anwar, N. Hosseinzadeh, S. N. Islam, A. N. Mahmood,
+and R. Doss, “A secure federated learning framework for residential
+short term load forecasting,” IEEE Trans. Smart Grid , vol. 15, no. 2,
+pp. 2044–2055, Mar. 2024.
+[12] A. Mantelero, “The EU proposal for a general data protection regulation
+and the roots of the ‘right to be forgotten’,” Comput. Law Secur . Rev. ,
+vol. 29, no. 3, pp. 229–235, 2013.
+[13] T. Shaik, X. Tao, H. Xie, L. Li, X. Zhu, and Q. Li, “Exploring the landscape
+of machine unlearning: A survey and taxonomy,” 2023,arXiv:2305.06360.
+[14] C. Y u, S. Jeoung, A. Kasi, P . Y u, and H. Ji, “Unlearning bias in language
+models by partitioning gradients,” in Proc. Findings Assoc. Comput.
+Linguistics, 2023, pp. 6032–6048.
+[15] Y . Zeng, J. Xu, Y . Li, C. Chen, Q. Dai, and Z. Du, “Towards highly-efﬁcient
+and accurate services QoS prediction via machine unlearning,” in IEEE
+Access, vol. 11, pp. 76242–76254, 2023.
+[16] H. Xia et al., “FedME2: Memory evaluation & erase promoting federated
+unlearning in DTMN,” IEEE J. Sel. Areas Commun. , vol. 41, no. 11,
+pp. 3573–3588, Nov. 2023.
+[17] Z. Zhang, M. Tian, C. Li, Y . Huang, and L. Y ang, “Poison neural
+network-based mmWave beam selection and detoxiﬁcation with machine
+unlearning,”IEEE Trans. Commun., vol. 71, no. 2, pp. 877–892, Feb. 2023.
+[18] Y . Cao and J. Y ang, “Towards making systems forget with machine
+unlearning,” in Proc. IEEE Symp. Secur . Privacy, 2015, pp. 463–480.
+[19] A. Ginart, M. Guan, G. V aliant, and J. Y . Zou, “Making AI forget you:
+Data deletion in machine learning,” in Proc. 33rd Int. Conf. Neural Inf.
+Process. Syst., 2019, pp. 3518–3531.
+[20] J. Brophy and D. Lowd, “Machine unlearning for random forests,” in Proc.
+Int. Conf. Mach. Learn. , PMLR, 2021, pp. 1092–1104.
+[21] A. Golatkar, A. Achille, and S. Soatto, “Eternal sunshine of the spotless net:
+Selective forgetting in deep networks,” inProc. IEEE/CVF Conf. Comput.
+Vis. Pattern Recognit., 2020, pp. 9304–9312.
+[22] A. Peste, D. Alistarh, and C. H. Lampert, “SSSE: Efﬁciently erasing sam-
+ples from trained machine learning models,” in Proc. NeurIPS Workshop
+Privacy Mach. Learn., 2021.
+[23] S. Fu, F. He, Y . Xu, and D. Tao, “Bayesian inference forgetting,” 2021,
+arXiv:2101.06417.
+[24] A. Golatkar, A. Achille, A. Ravichandran, M. Polito, and S. Soatto,
+“Mixed-privacy forgetting in deep networks,” in Proc. IEEE/CVF Conf.
+Comput. Vis. Pattern Recognit., 2021, pp. 792–801.
+[25] C. Guo, T. Goldstein, A. Hannun, and L. V an Der Maaten, “Certiﬁed data
+removal from machine learning models,” in Proc. 37th Int. Conf. Mach.
+Learn., 2020, pp. 3832–3842.
+[26] J. Bae, N. Ng, A. Lo, M. Ghassemi, and R. B. Grosse, “If inﬂuence
+functions are the answer, then what is the question?,” in Proc. Adv. Neural
+Inf. Process. Syst., 2022, pp. 17953–17967.
+[27] T. Hoang, S. Rana, S. Gupta, and S. V enkatesh, “Learn to unlearn for
+deep neural networks: Minimizing unlearning interference with gradient
+projection,” in Proc. IEEE/CVF Winter Conf. Appl. Comput. Vis. , 2024,
+pp. 4819–4828.
+[28] L. Graves, V . Nagisetty, and V . Ganesh, “Amnesiac machine learning,” in
+Proc. AAAI Conf. Artif. Intell. , 2021, pp. 11516–11524.
+[29] L. Bourtoule et al., “Machine unlearning,” in Proc. IEEE Symp. Secur .
+Privacy, 2021, pp. 141–159.
+[30] T. T. Nguyen, T. T. Huynh, P . L. Nguyen, A. W.-C. Liew, H. Yin, and Q. V .
+H. Nguyen, “A survey of machine unlearning,” 2022, arXiv:2209.02299.
+[31] R. V ohra, A. Rajaei, and J. L. Cremer, “End-to-end learning with multiple
+modalities for system-optimised renewables nowcasting,” in Proc. IEEE
+Belgrade PowerTech2023, pp. 1–8.
+[32] W. Xu, J. Wang, and F. Teng, “E2E-A T: A uniﬁed framework for tackling
+uncertainty in task-aware end-to-end learning,” 2023, arXiv:2312.10587.
+[33] P . Donti, B. Amos, and J. Z. Kolter, “Task-based end-to-end model learning
+in stochastic optimization,” in Proc. 31st Int. Conf. Neural Inf. Process.
+Syst., 2017, pp. 5490–5500.
+[34] R. D. Cook and S. Weisberg, Residuals and Inﬂuence in Regression.N e w
+Y ork, NY , USA: Chapman and Hall, 1982.
+[35] G. Wu, M. Hashemi, and C. Srinivasa, “PUMA: Performance unchanged
+model augmentation for training data removal,” in Proc. AAAI Conf. Artif.
+Intell., 2022, pp. 8675–8682.
+[36] P . W. Koh and P . Liang, “Understanding black-box predictions via inﬂu-
+ence functions,” in Proc. Int. Conf. Mach. Learn. , 2017, pp. 1885–1894.
+[37] C. Wang, Y . Zhou, Q. Wen, and Y . Wang, “Improving load forecasting
+performance via sample reweighting,” IEEE Trans. Smart Grid , vol. 14,
+no. 4, pp. 3317–3320, Jul. 2023.
+[38] A. Agrawal, B. Amos, S. Barratt, S. Boyd, S. Diamond, and J. Z. Kolter,
+“Differentiable convex optimization layers,” in Proc. 33rd Int. Conf.
+Neural Inf. Process. Syst., 2019, pp. 9562–9574.
+[39] F. Zhuang et al., “A comprehensive survey on transfer learning,” in Proc.
+IEEE, vol. 109, no. 1, pp. 43–76, Jan. 2021.
+[40] B. A. Pearlmutter, “Fast exact multiplication by the hessian,” Neural
+Comput., vol. 6, no. 1, pp. 147–160, 1994.
+[41] S. Diamond and S. Boyd, “CVXPY: A python-embedded modeling lan-
+guage for convex optimization,” J. Mach. Learn. Res. , vol. 17, no. 1,
+pp. 2909–2913, 2016.
+[42] J. Lu et al., “A synthetic texas backbone power system with climate-
+dependent spatio-temporal correlated proﬁles,” 2023, arXiv:2302.13231.
+[43] I. O. Tolstikhin et al., “MLP-mixer: An all-MLP architecture for vision,”
+in Proc. Adv. Neural Inf. Process. Syst., 2021, pp. 24261–24272.
+[44] A. J. Conejo and L. Baringo, Power System Operations , vol. 11, Berlin,
+Germany: Springer, 2018.
+[45] J. Zhang, Y . Wang, and G. Hug, “Cost-oriented load forecasting,” Electric
+Power Syst. Res., vol. 205, 2022, Art. no. 107723.
+[46] N. Jorge and J. W. Stephen, Numerical Optimization . Berlin, Germany:
+Spinger, 2006.
+Wangkun Xu (Student Member, IEEE) received the
+B.Eng. degree in electrical and electronic engineering
+from the University of Liverpool, Liverpool, U.K., in
+2018, and the M.Sc. degree in control systems in 2019
+from Imperial College London, London, U.K., where
+he is currently working toward the Ph.D. degree. His
+research interests include machine learning and op-
+timization, with application in cyber-physical power
+system operation and security.
+Fei Teng(Senior Member, IEEE) received the B.Eng.
+degree in electrical engineering from Beihang Uni-
+versity, Beijing, China, in 2009, and the M.Sc. and
+Ph.D. degrees in electrical engineering from Impe-
+rial College London, London, U.K., in 2010 and
+2015, respectively. He is currently a Senior Lecturer
+with the Department of Electrical and Electronic
+Engineering, Imperial College London. His research
+interests include the power system operation with
+high penetration of Inverter-Based Resources (IBRs)
+and the Cyber-resilient and Privacy-preserving
+cyber-physical power grid.
+Authorized licensed use limited to: Donghua University. Downloaded on August 31,2025 at 13:33:42 UTC from IEEE Xplore.  Restrictions apply. 
